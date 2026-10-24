@@ -633,7 +633,7 @@ with st.sidebar:
 
 st.title("🌿 筑梦健康毕节")
 st.write("上传体检表，核对数据，批量识别需要重点复核和随访的人群。")
-st.info("研究试用版：使用旧版冻结模型及原研究阈值。高／低分层尚未完成临床阈值验证；低风险也不代表无需管理。"
+st.info("使用固定模型及原研究阈值。高／低分层尚未完成临床阈值验证；低风险也不代表无需管理。"
         "0年是当前记录状态识别，1／3／5年为不同历史队列训练的首次记录预测模型。")
 if mode != "一般人群":
     st.warning("此入口使用原CMM逻辑回归固定系数及原0.435阈值，不调用一般人群模型。"
@@ -691,7 +691,7 @@ st.dataframe(audit, hide_index=True, use_container_width=True)
 eligible = audit["状态"].eq("可评估")
 st.write(f"共 {len(audit)} 人，可评估 {int(eligible.sum())} 人，待核实／排除 {int((~eligible).sum())} 人。")
 st.download_button("下载核查清单", csv_bytes(audit), "数据核查.csv", "text/csv")
-confirmed = st.checkbox("我已核对字段编码、单位、血压列、既往CVD病史和基线时间；此次结果用于研究试用。")
+confirmed = st.checkbox("我已核对字段编码、单位、血压列、既往CVD病史和基线时间；此次结果用于辅助评估与随访管理。")
 signature = json.dumps({"file": __import__('hashlib').sha256(uploaded.getvalue()).hexdigest(),
                         "mapping": mapping, "mode": mode, "horizons": horizons, "cap": missing_cap, "cmm_encoding": cmm_encoding}, ensure_ascii=False)
 if st.session_state.get("batch_signature") != signature:
