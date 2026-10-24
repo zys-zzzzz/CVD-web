@@ -616,7 +616,7 @@ catalog = json.loads((ROOT / "catalog.json").read_text(encoding="utf-8"))
 with st.sidebar:
     st.title("🌿 筑梦健康毕节")
     st.caption("65岁及以上老年人 · 社区医务人员批量评估")
-    mode = st.radio("评估范围", ["一般人群", "代谢性疾病人群（原CMM评分）"])
+    mode = st.radio("评估范围", ["一般人群", "代谢性疾病人群"])
     metabolic_mode = mode != "一般人群"
     cmm_encoding = st.selectbox("源表性别／吸烟的数值编码", ["0/1", "1/2"],
         help="原CMM表：0男1女、0不吸烟1吸烟；一般模型表：1男2女、1不吸烟2吸烟。中文值按明确含义匹配。") if metabolic_mode else "1/2"
