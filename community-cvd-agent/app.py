@@ -1,4 +1,49 @@
 from pathlib import Path
+
+# Reassemble unchanged frozen artifacts split solely for GitHub browser uploads.
+def _restore_frozen_artifacts(root):
+    import hashlib
+    import json
+    import os
+    import uuid
+    manifest_path = root / "model_parts.json"
+    if not manifest_path.exists():
+        raise RuntimeError("缺少model_parts.json，请将网页上传版的全部文件上传到仓库。")
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    def digest(path):
+        value = hashlib.sha256()
+        with path.open("rb") as handle:
+            for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+                value.update(chunk)
+        return value.hexdigest()
+    for entry in manifest["artifacts"]:
+        target = (root / entry["file"]).resolve()
+        if not target.is_relative_to(root.resolve()):
+            raise RuntimeError("模型清单目标路径无效")
+        if target.exists() and target.stat().st_size == entry["bytes"] and digest(target) == entry["sha256"]:
+            continue
+        temporary = target.with_name(target.name + "." + uuid.uuid4().hex + ".tmp")
+        target.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            with temporary.open("xb") as output:
+                for piece in entry["parts"]:
+                    source = (root / piece["file"]).resolve()
+                    if not source.is_relative_to(root.resolve()):
+                        raise RuntimeError("模型分片路径无效")
+                    if not source.exists():
+                        raise RuntimeError("模型分片未上传完整：" + piece["file"])
+                    if source.stat().st_size != piece["bytes"] or digest(source) != piece["sha256"]:
+                        raise RuntimeError("模型分片校验失败：" + piece["file"])
+                    with source.open("rb") as handle:
+                        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+                            output.write(chunk)
+            if temporary.stat().st_size != entry["bytes"] or digest(temporary) != entry["sha256"]:
+                raise RuntimeError("模型还原校验失败：" + entry["file"])
+            os.replace(temporary, target)
+        finally:
+            temporary.unlink(missing_ok=True)
+
+_restore_frozen_artifacts(Path(__file__).resolve().parent)
 import sys, types
 _frozen_module=types.ModuleType("nine_core")
 sys.modules["nine_core"]=_frozen_module
@@ -294,7 +339,218 @@ def csv_bytes(frame):
     return safe.to_csv(index=False).encode("utf-8-sig")
 
 
+import re
+import time
+import urllib.parse
+import urllib.error
+class GraphError(ValueError):
+    pass
+TOPICS = {'HYPERTENSION', 'T2DM', 'DYSLIPIDEMIA', 'PRIMARY_PREVENTION', 'CMM_MANAGEMENT'}
+
+class NoRedirect(urllib.request.HTTPRedirectHandler):
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        return None
+
+class MCPClient:
+
+    def __init__(self, url, token, opener=None):
+        parsed = urllib.parse.urlsplit(url or '')
+        if parsed.scheme != 'https' or not parsed.hostname or parsed.username or parsed.password or (not token):
+            raise GraphError('KG_CONFIG_MISSING_OR_INVALID')
+        self.url, self.token = (url, token)
+        self.opener = opener or urllib.request.build_opener(NoRedirect())
+        self.session = None
+        self.protocol = '2025-03-26'
+        self.sequence = 0
+        self.deadline = time.monotonic() + 75
+
+    def rpc(self, method, params=None, notification=False):
+        remaining = self.deadline - time.monotonic()
+        if remaining <= 0:
+            raise GraphError('KG_TIMEOUT')
+        payload = {'jsonrpc': '2.0', 'method': method}
+        if params is not None:
+            payload['params'] = params
+        if not notification:
+            self.sequence += 1
+            payload['id'] = self.sequence
+        headers = {'Authorization': 'Bearer ' + self.token, 'Content-Type': 'application/json', 'Accept': 'application/json, text/event-stream'}
+        if method != 'initialize':
+            headers['MCP-Protocol-Version'] = self.protocol
+        if self.session:
+            headers['Mcp-Session-Id'] = self.session
+        request = urllib.request.Request(self.url, data=json.dumps(payload).encode(), headers=headers, method='POST')
+        try:
+            with self.opener.open(request, timeout=min(15, remaining)) as response:
+                session = response.headers.get('Mcp-Session-Id')
+                if session:
+                    self.session = session
+                if notification and response.status in (200, 202, 204):
+                    return None
+                content_type = response.headers.get('Content-Type', '').lower()
+                if 'text/event-stream' in content_type:
+                    pieces = []
+                    size = 0
+                    while True:
+                        line = response.readline(1048577)
+                        size += len(line)
+                        if size > 1048576:
+                            raise GraphError('KG_RESPONSE_TOO_LARGE')
+                        if not line:
+                            break
+                        if line.startswith(b'data:'):
+                            pieces.append(line[5:].strip())
+                        elif not line.strip() and pieces:
+                            value = json.loads(b'\n'.join(pieces))
+                            pieces = []
+                            if isinstance(value, dict) and value.get('id') == payload.get('id'):
+                                return self.unwrap(value, payload['id'])
+                    raise GraphError('KG_PROTOCOL_ERROR')
+                raw = response.read(1048577)
+                if len(raw) > 1048576:
+                    raise GraphError('KG_RESPONSE_TOO_LARGE')
+                return self.unwrap(json.loads(raw), payload.get('id'))
+        except urllib.error.HTTPError as error:
+            raise GraphError("KG_HTTP_" + str(error.code)) from None
+        except GraphError:
+            raise
+        except Exception:
+            raise GraphError('KG_CONNECTION_OR_PROTOCOL_FAILED') from None
+
+    @staticmethod
+    def unwrap(value, expected_id):
+        if not isinstance(value, dict) or value.get('id') != expected_id or 'error' in value or ('result' not in value):
+            raise GraphError('KG_PROTOCOL_ERROR')
+        return value['result']
+
+    def initialize(self):
+        result = self.rpc('initialize', {'protocolVersion': self.protocol, 'capabilities': {}, 'clientInfo': {'name': 'cmm-guideline-router', 'version': '1.0'}})
+        protocol = result.get('protocolVersion', '')
+        if not re.fullmatch('\\d{4}-\\d{2}-\\d{2}', protocol):
+            raise GraphError('KG_PROTOCOL_ERROR')
+        self.protocol = protocol
+        self.rpc('notifications/initialized', notification=True)
+        listed = self.rpc('tools/list')
+        if listed.get('nextCursor'):
+            raise GraphError('KG_TOOL_LIST_PAGINATED')
+        self.schemas = {tool['name']: tool.get('inputSchema', {}) for tool in listed.get('tools', [])}
+
+    def call(self, name, arguments):
+        schema = self.schemas.get(name)
+        if not schema:
+            raise GraphError('KG_TOOL_MISSING')
+        if not set(schema.get('required', [])) <= set(arguments):
+            raise GraphError('KG_TOOL_SCHEMA_MISMATCH')
+        if not set(arguments) <= set(schema.get('properties', {})):
+            raise GraphError('KG_TOOL_SCHEMA_MISMATCH')
+        if name == 'search_management_rules':
+            if set(arguments) != {'topic'} or arguments['topic'] not in TOPICS:
+                raise GraphError('KG_ARGUMENT_REJECTED')
+        elif name == 'get_rule_evidence':
+            if set(arguments) != {'rule_id'} or not re.fullmatch('MR-[A-Z]+-\\d{3}', arguments['rule_id']):
+                raise GraphError('KG_ARGUMENT_REJECTED')
+        else:
+            raise GraphError('KG_TOOL_REJECTED')
+        result = self.rpc('tools/call', {'name': name, 'arguments': arguments})
+        if result.get('isError'):
+            raise GraphError('KG_TOOL_FAILED')
+        return result
+
+def result_rows(result):
+    payload = result.get('structuredContent')
+    if payload is None:
+        values = []
+        for block in result.get('content', []):
+            if block.get('type') == 'text':
+                try:
+                    values.append(json.loads(block['text']))
+                except (KeyError, ValueError):
+                    raise GraphError('KG_RESULT_SCHEMA_MISMATCH') from None
+        payload = values
+    rows = []
+
+    def walk(value, depth=0):
+        if depth > 7:
+            raise GraphError('KG_RESULT_SCHEMA_MISMATCH')
+        if isinstance(value, list):
+            for item in value:
+                walk(item, depth + 1)
+        elif isinstance(value, dict):
+            if value.get('rule_id') or value.get('id'):
+                rows.append(value)
+            else:
+                for key in ('result', 'results', 'rules', 'records', 'evidence', 'data'):
+                    if key in value:
+                        walk(value[key], depth + 1)
+    walk(payload)
+    return rows
+
+def _mcp_evidence_row(row, topic, expected_id=None):
+    def pick(*names):
+        for name in names:
+            value = row.get(name)
+            if value is not None and value != "" and value != []:
+                return value
+        return None
+    rule_id = pick("rule_id", "id")
+    if not isinstance(rule_id, str) or not re.fullmatch(r"MR-[A-Z]+-\d{3}", rule_id):
+        return None
+    if expected_id is not None and rule_id != expected_id:
+        return None
+    if row.get("topic") not in (None, topic):
+        return None
+    if row.get("release_status") not in (None, "ACTIVE"):
+        return None
+    record = {"rule_id": rule_id, "topic": topic,
+        "recommendation": pick("recommendation", "statement"),
+        "conditions": pick("conditions", "conditions_text"),
+        "populations": pick("populations", "population", "population_name"),
+        "actions": pick("actions", "action", "management_action"),
+        "source_document": pick("source_document", "source", "source_title", "document_title"),
+        "source_version": pick("source_version", "version", "document_version"),
+        "source_locator": pick("source_locator", "locator"),
+        "source_excerpt": pick("source_excerpt", "excerpt"),
+        "text_fidelity": pick("text_fidelity", "evidence_fidelity")}
+    if row.get("release_status"):
+        record["release_status"] = row["release_status"]
+    # Missing provenance stays missing; never manufacture a source or condition.
+    return record if filter_evidence([record])[0] else None
+
+
+def _get_mcp_graph(topics, settings):
+    requested = list(dict.fromkeys(topics))
+    if not requested or any(t not in TOPICS for t in requested):
+        raise GraphError("KG_ARGUMENT_REJECTED")
+    client = MCPClient(settings.get("url", ""), settings.get("token", ""))
+    client.initialize()
+    accepted, rejected = [], []
+    seen = set()
+    for topic in requested:
+        rows = result_rows(client.call("search_management_rules", {"topic": topic}))
+        for row in rows[:60]:
+            rule_id = row.get("rule_id") or row.get("id")
+            if not isinstance(rule_id, str) or not re.fullmatch(r"MR-[A-Z]+-\d{3}", rule_id):
+                continue
+            if (topic, rule_id) in seen:
+                continue
+            seen.add((topic, rule_id))
+            value = _mcp_evidence_row(row, topic, rule_id)
+            if value is not None:
+                accepted.append(value)
+                continue
+            details = result_rows(client.call("get_rule_evidence", {"rule_id": rule_id}))
+            records = [_mcp_evidence_row(r, topic, rule_id) for r in details]
+            records = [r for r in records if r is not None]
+            if records:
+                accepted.extend(records)
+            else:
+                rejected.append(rule_id)
+    return accepted, list(dict.fromkeys(rejected))
+
 def get_graph(topics, settings):
+    if settings.get("url") or settings.get("token"):
+        return _get_mcp_graph(topics, settings)
     from neo4j import GraphDatabase, Query
     with GraphDatabase.driver(settings["uri"], auth=(settings["username"], settings["password"]),
                               connection_timeout=8) as driver:
@@ -349,7 +605,7 @@ with st.sidebar:
     if metabolic_mode:
         st.caption("原CMM模型缺少冻结插补器，必要指标缺失时暂不评分。左侧缺失比例设置仅用于一般模型。")
     st.caption("LLM：" + ("已配置" if settings.get("llm", {}).get("api_key") else "未配置，仍可本地评分"))
-    st.caption("知识图谱：" + ("已填连接配置" if settings.get("neo4j", {}).get("password") else "待配置"))
+    st.caption("知识图谱：" + ("已填连接配置" if (settings.get("mcp", {}).get("url") and settings.get("mcp", {}).get("token")) or settings.get("neo4j", {}).get("password") else "待配置"))
 
 st.title("🌿 筑梦健康毕节")
 st.write("上传体检表，核对数据，批量识别需要重点复核和随访的人群。")
@@ -475,7 +731,7 @@ st.caption("按已报告病史检索；插补值不用于确诊疾病或触发�
 if st.button("📚 检索指南条款", disabled=not eligible.any()):
     topics = sorted({topic for _, row in data.loc[eligible].iterrows() for topic in topics_for(row)})
     try:
-        records, rejected = get_graph(topics, settings.get("neo4j", {}))
+        records, rejected = get_graph(topics, settings.get("mcp") or settings.get("neo4j", {}))
         st.session_state.graph_records = records
         found = {r["topic"] for r in records}
         st.session_state.graph_error = "；".join(filter(None, [
@@ -484,7 +740,7 @@ if st.button("📚 检索指南条款", disabled=not eligible.any()):
         st.session_state.pop("work_summary", None)
     except Exception as error:
         st.session_state.graph_records = []
-        st.session_state.graph_error = f"连接或检索失败（{type(error).__name__}）；本地评分结果仍保留。"
+        st.session_state.graph_error = f"连接或检索失败（{str(error) if isinstance(error, GraphError) else type(error).__name__}）；本地评分结果仍保留。"
 if st.session_state.get("graph_error"):
     st.warning(st.session_state.graph_error)
 records = st.session_state.get("graph_records", [])
