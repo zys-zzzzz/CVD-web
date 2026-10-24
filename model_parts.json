@@ -1,0 +1,79 @@
+{
+  "part_size_bytes": 20971520,
+  "purpose": "browser_upload_only_no_model_change",
+  "artifacts": [
+    {
+      "file": "models/h0/preprocess.joblib",
+      "sha256": "67216b751c34c2e451db9873a6bcfc7805095e56d3879c4e1b5e826ce8fc465a",
+      "bytes": 43024479,
+      "parts": [
+        {
+          "file": "models/h0/preprocess.joblib.part000",
+          "bytes": 20971520,
+          "sha256": "90be244c351aa8455a0a11a8fc593b00b9bb0b7703c672ab1a51075b54f91949"
+        },
+        {
+          "file": "models/h0/preprocess.joblib.part001",
+          "bytes": 20971520,
+          "sha256": "e9f03d30f9f3f097ac528b62e9863d91fd2988b1be99c6b20ede82bff3b75305"
+        },
+        {
+          "file": "models/h0/preprocess.joblib.part002",
+          "bytes": 1081439,
+          "sha256": "00d069d5a4b7dbdb21fcc7c81e2f5d63a988f29f01130073eacf6fed6e4b9e7b"
+        }
+      ]
+    },
+    {
+      "file": "models/h1/preprocess.joblib",
+      "sha256": "bcc9dcaa41f4cc29610e993ac5ce249745459a9718d2edc31c88c8f4ed876d1a",
+      "bytes": 33903648,
+      "parts": [
+        {
+          "file": "models/h1/preprocess.joblib.part000",
+          "bytes": 20971520,
+          "sha256": "ae5fbd2ade9695d30050b7889ca73b0a7360d6b6870173984191c576d73f8f48"
+        },
+        {
+          "file": "models/h1/preprocess.joblib.part001",
+          "bytes": 12932128,
+          "sha256": "bc6f5bf1c5e711e0982022358b3ecc4027d56717ea525c9120eae9d22d6fee7d"
+        }
+      ]
+    },
+    {
+      "file": "models/h3/preprocess.joblib",
+      "sha256": "35b26831b174a4c5be54c88303c3cb34ba2d242389864955c2653c9d992bd6a2",
+      "bytes": 35189292,
+      "parts": [
+        {
+          "file": "models/h3/preprocess.joblib.part000",
+          "bytes": 20971520,
+          "sha256": "51d78b63a3e8add75bc96886b29f8153abf5c4fc58d0120a1443a6b2c7c912bb"
+        },
+        {
+          "file": "models/h3/preprocess.joblib.part001",
+          "bytes": 14217772,
+          "sha256": "699593686eaa9c5d2f5aed3344b189f18030587c81221543eba566f96d659cf0"
+        }
+      ]
+    },
+    {
+      "file": "models/h5/preprocess.joblib",
+      "sha256": "4ae2e929b357f5608e241426f83a20b53b43ef5e61a1ba31bb78c97ab7542cfc",
+      "bytes": 31963073,
+      "parts": [
+        {
+          "file": "models/h5/preprocess.joblib.part000",
+          "bytes": 20971520,
+          "sha256": "c435f8d99c17a06be255faf2778253e96861c76cfce85d70cf376cdef6891644"
+        },
+        {
+          "file": "models/h5/preprocess.joblib.part001",
+          "bytes": 10991553,
+          "sha256": "317d73b9e8c94d29b55901d0e2d53a24b544fc873233691ed7ff22432a44f515"
+        }
+      ]
+    }
+  ]
+}
