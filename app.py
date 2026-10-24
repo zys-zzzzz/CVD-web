@@ -56,7 +56,7 @@ def calibrate(p,c):
     z=(logit(np.clip(p,1e-8,1-1e-8))-c["center"])/c["scale"]
     return expit(c["coefficients"][0]+c["coefficients"][1]*z)
 
-"""Frozen-model inference and explicit, auditable input handling. No training."""
+# Frozen-model inference; no training.
 from pathlib import Path
 import hashlib
 import json
@@ -263,7 +263,31 @@ def filter_evidence(records):
 _cmm=types.ModuleType("_original_cmm")
 exec('"""Portable original CMM arithmetic; no imputation or training. Baseline CVD and population eligibility must be checked by the caller."""\nimport hashlib\nimport hmac\nimport json\nimport math\n\nEXPECTED_PARAMETER_SHA256 = \'f14c2909a52eeb25113d178bfec42b705bbf9de60c16a03f49005053cf51b37b\'\nREQUIRED = (\'age\', \'gender\', \'temperature\', \'pulse\', \'systolic\', \'diastolic\', \'left_naked_eye\', \'right_naked_eye\', \'heart_rate\', \'hear\', \'exercise\', \'heart_rhythm\', \'smoke\', \'HGB\', \'PLT\', \'Creatinine\', \'Urea\', \'TC\', \'LDL_C\', \'HDL_C\', \'hypertension_final\', \'diabetes_final\', \'dyslipidemia_final\', \'height_cm\', \'waist_cm\', \'weight_kg\', \'glucose_mmolL\', \'triglycerides_mmolL\')\nORDER = (\'age\', \'temperature\', \'pulse\', \'left_naked_eye\', \'right_naked_eye\', \'heart_rate\', \'HGB\', \'PLT\', \'Creatinine\', \'Urea\', \'TC\', \'LDL_C\', \'HDL_C\', \'systolic\', \'diastolic\', \'RFM\', \'TyG\', \'TyG_BMI\', \'count\', \'gender\', \'smoke\', \'heart_rhythm\', \'hear\', \'exercise\')\nBINARY = {\'gender\', \'smoke\', \'heart_rhythm\', \'hear\', \'exercise\', \'hypertension_final\', \'diabetes_final\', \'dyslipidemia_final\'}\nPOSITIVE = {\'height_cm\', \'waist_cm\', \'weight_kg\', \'glucose_mmolL\', \'triglycerides_mmolL\'}\n\nclass Rejected(Exception):\n\n    def __init__(self, code, *, row=None, fields=None):\n        self.code, self.row = (code, row)\n        self.fields = [f for f in fields or [] if f in REQUIRED]\n\ndef decode_parameters(content):\n    if not hmac.compare_digest(hashlib.sha256(content).hexdigest(), EXPECTED_PARAMETER_SHA256):\n        raise Rejected(\'MODEL_INTEGRITY_FAILED\')\n    parameters = json.loads(content)\n    if tuple(parameters[\'required_fields\']) != REQUIRED or tuple(parameters[\'feature_order\']) != ORDER:\n        raise Rejected(\'MODEL_SCHEMA_FAILED\')\n    if parameters[\'classes\'] != [0, 1] or parameters[\'threshold\'] != 0.435:\n        raise Rejected(\'MODEL_SCHEMA_FAILED\')\n    if len(parameters[\'coefficients\']) != 24 or len(parameters[\'continuous_mins\']) != 19 or len(parameters[\'continuous_maxs\']) != 19:\n        raise Rejected(\'MODEL_SCHEMA_FAILED\')\n    numbers = [parameters[\'intercept\'], *parameters[\'coefficients\'], *parameters[\'continuous_mins\'], *parameters[\'continuous_maxs\']]\n    if any((type(n) not in (int, float) or not math.isfinite(n) for n in numbers)):\n        raise Rejected(\'MODEL_SCHEMA_FAILED\')\n    if any((hi <= lo for lo, hi in zip(parameters[\'continuous_mins\'], parameters[\'continuous_maxs\']))):\n        raise Rejected(\'MODEL_SCHEMA_FAILED\')\n    return parameters\n\ndef validate_record(record, row):\n    if not isinstance(record, dict):\n        raise Rejected(\'RECORD_OBJECT_REQUIRED\', row=row)\n    missing = [f for f in REQUIRED if f not in record or record[f] is None or str(record[f]).strip() == \'\']\n    if missing:\n        raise Rejected(\'MISSING_FIELDS\', row=row, fields=missing)\n    values = {}\n    for field in REQUIRED:\n        raw = record[field]\n        if isinstance(raw, bool) or not isinstance(raw, (str, int, float)):\n            raise Rejected(\'INVALID_NUMBER\', row=row, fields=[field])\n        try:\n            value = float(raw)\n        except (ValueError, TypeError, OverflowError):\n            raise Rejected(\'INVALID_NUMBER\', row=row, fields=[field]) from None\n        if not math.isfinite(value):\n            raise Rejected(\'FINITE_NUMBER_REQUIRED\', row=row, fields=[field])\n        if field in BINARY and value not in (0, 1):\n            raise Rejected(\'BINARY_VALUE_REQUIRED\', row=row, fields=[field])\n        if field in POSITIVE and value <= 0:\n            raise Rejected(\'POSITIVE_VALUE_REQUIRED\', row=row, fields=[field])\n        values[field] = value\n    if values[\'age\'] < 65:\n        raise Rejected(\'AGE_OUT_OF_SCOPE\', row=row, fields=[\'age\'])\n    return values\n\ndef predict_record(record, parameters, row=1):\n    values = validate_record(record, row)\n    try:\n        values[\'count\'] = sum((values[f] for f in (\'hypertension_final\', \'diabetes_final\', \'dyslipidemia_final\')))\n        values[\'RFM\'] = 64 - 20 * (values[\'height_cm\'] / values[\'waist_cm\']) + 12 * values[\'gender\']\n        values[\'TyG\'] = math.log(values[\'triglycerides_mmolL\'] * 88.6 * (values[\'glucose_mmolL\'] * 18.0) / 2)\n        values[\'BMI\'] = values[\'weight_kg\'] / (values[\'height_cm\'] / 100) ** 2\n        values[\'TyG_BMI\'] = values[\'TyG\'] * values[\'BMI\']\n    except (OverflowError, ZeroDivisionError, ValueError):\n        raise Rejected(\'DERIVED_VALUE_INVALID\', row=row) from None\n    if any((not math.isfinite(v) for v in values.values())):\n        raise Rejected(\'DERIVED_VALUE_INVALID\', row=row)\n    features, outside = ([], [])\n    for index, name in enumerate(ORDER):\n        value = values[name]\n        if index < 19:\n            low, high = (parameters[\'continuous_mins\'][index], parameters[\'continuous_maxs\'][index])\n            if not low <= value <= high:\n                outside.append(name)\n            value = max(0.0, min(1.0, (value - low) / (high - low)))\n        features.append(value)\n    score = parameters[\'intercept\'] + sum((c * x for c, x in zip(parameters[\'coefficients\'], features)))\n    if score >= 0:\n        probability = 1 / (1 + math.exp(-score))\n    else:\n        exp_score = math.exp(score)\n        probability = exp_score / (1 + exp_score)\n    return {\'row_number\': row, \'class_1_probability\': probability, \'threshold\': parameters[\'threshold\'], \'risk_level\': \'High Risk\' if probability >= parameters[\'threshold\'] else \'Low Risk\', **{k: values[k] for k in (\'count\', \'RFM\', \'TyG\', \'BMI\', \'TyG_BMI\')}, \'out_of_training_range_fields\': \';\'.join(outside), \'model_id\': parameters[\'model_id\']}\n', _cmm.__dict__)
 
-CMM_PARAMETERS_FILE = ROOT / "models/metabolic/lr_parameters.json"
+def _find_cmm_parameters(root):
+    expected = root / "models/metabolic/lr_parameters.json"
+    if expected.is_file():
+        return expected
+    # Search only this deployed project, never the whole server.
+    candidates = sorted(p for p in root.rglob("lr_parameters.json")
+                        if p.is_file() and p.resolve().is_relative_to(root.resolve())
+                        and not any(part.startswith(".") for part in p.relative_to(root).parts))
+    valid = []
+    for candidate in candidates:
+        try:
+            _cmm.decode_parameters(candidate.read_bytes())
+        except Exception:
+            continue
+        valid.append(candidate)
+    if len(valid) == 1:
+        return valid[0]
+    import streamlit as st
+    st.error("缺少代谢性疾病模型参数文件，或找到多个有效副本。")
+    st.code("请在 GitHub 的 app.py 同级目录建立：models/metabolic/\nlr_parameters.json 应上传到该文件夹。\n预期路径：" + str(expected))
+    if valid:
+        st.write("发现多个副本，请仅保留一个：", [str(p.relative_to(root)) for p in valid])
+    st.stop()
+
+CMM_PARAMETERS_FILE = _find_cmm_parameters(ROOT)
 CMM_PARAMETERS = _cmm.decode_parameters(CMM_PARAMETERS_FILE.read_bytes())
 CMM_TO_GENERAL = {"waist_cm": "WC_cm", "glucose_mmolL": "glucose",
  "triglycerides_mmolL": "TG", "hypertension_final": "hypertension_history",
