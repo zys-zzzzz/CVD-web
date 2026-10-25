@@ -339,14 +339,15 @@ import streamlit as st
 st.set_page_config(page_title="健康毕节 · 银龄体检医助", page_icon="🩺", layout="wide")
 st.markdown("""<style>
 .stApp{background:#f5f6fc;color:#252b46}
-.block-container{max-width:1420px;padding-top:2rem;padding-bottom:3rem}
+.block-container{max-width:1420px;padding-top:5rem;padding-bottom:3rem}
+[data-testid=stHeader]{background:#f5f6fc;border-bottom:1px solid #eceef8}
 [data-testid=stSidebar]{background:#fff;border-right:1px solid #e7e9f4}
 h1,h2,h3{color:#252c59;letter-spacing:-.025em}
-.hero{background:linear-gradient(115deg,#3444a4 0%,#6554b5 70%,#8473c8 100%);border-radius:26px;padding:32px 38px;display:flex;justify-content:space-between;align-items:center;margin-bottom:28px;box-shadow:0 12px 35px #3444a414;color:#fff}
-.hero h1{color:#fff;font-size:2.1rem;margin:8px 0 14px;padding:0}
+.hero{background:linear-gradient(115deg,#3444a4 0%,#6554b5 70%,#8473c8 100%);border-radius:26px;padding:30px 36px;display:flex;gap:28px;justify-content:space-between;align-items:center;margin:0 0 28px;box-shadow:0 12px 35px #3444a414;color:#fff}
+.hero>div{min-width:0;flex:1}.hero h1{color:#fff;font-size:clamp(1.55rem,2.4vw,2.1rem);line-height:1.4;margin:12px 0 14px;padding:0;overflow-wrap:anywhere}
 .hero p{color:#edf0ff;font-size:1.08rem;margin-bottom:20px}
 .hero .eyebrow{font-size:.72rem;letter-spacing:.14em;color:#d4dafa}
-.hero-tags{font-size:.84rem;color:#f0f0ff}.hero-art{width:220px;min-width:150px;height:165px}
+.hero-tags{font-size:.84rem;color:#f0f0ff;line-height:1.8}.hero-art{width:190px;min-width:150px;height:155px;flex-shrink:0}
 .entry-card{background:#fff;padding:28px;border:1px solid #e2e5f4;border-radius:22px;min-height:262px;margin-bottom:12px;box-shadow:0 6px 24px #3346a806}
 .entry-card h2{font-size:1.4rem;margin-top:10px}.entry-card p{color:#636a83;line-height:1.85}
 .entry-icon{color:#6267bb;font-size:2rem}.entry-badges{color:#565bb3;background:#f0f1fc;border-radius:10px;padding:9px 12px;font-size:.88rem}
@@ -356,7 +357,7 @@ h1,h2,h3{color:#252c59;letter-spacing:-.025em}
 div.stButton>button{border-radius:12px;min-height:44px}div.stButton>button[kind=primary]{background:#4e54b5;border-color:#4e54b5}
 [data-testid=stMetric]{background:#fff;border:1px solid #e2e5f3;padding:15px 20px;border-radius:16px}
 [data-testid=stFileUploader]{background:#fff;border:1px dashed #b9bce0;border-radius:16px;padding:12px}
-@media(max-width:700px){.hero{padding:22px}.hero h1{font-size:1.6rem}.hero-art{display:none}.steps{gap:8px;font-size:.8rem}.entry-card{min-height:0}}
+@media(max-width:700px){.block-container{padding-top:4.5rem}.hero{padding:24px;gap:0}.hero h1{font-size:1.6rem}.hero .eyebrow{font-size:.62rem;line-height:1.6}.hero-art{display:none}.steps{gap:8px;font-size:.8rem}.entry-card{min-height:0}}
 </style>""", unsafe_allow_html=True)
 
 
@@ -721,6 +722,8 @@ def grounded_answer(question, evidence, llm_settings, counts=None):
                 "只回答所问内容：生活方式问题不展开药物策略，评估问题不扩展药物或无关目标值。"
                 "limitations只简要说明未覆盖部分，不举未提供的医学例子，也不补写建议。"
                 "每个claims元素只表述一条有依据的管理意见，必须包含适用条件，rule_ids必须来自输入。"
+                "同一疾病的意见相邻排列，按首次评估、生活方式干预、随访复核的顺序写成连贯的正式中文。"
+                "适用条件自然融入正文，不重复写‘条款适用条件’‘依据’等标签；不得为了连贯而合并不同人群条件或增加事实。"
                 "source_quotes的quote必须逐字摘自对应source_excerpt，不能摘自问题或自己生成。"
                 "输出纯JSON：{\"claims\":[{\"text\":\"有条件的中文意见\",\"rule_ids\":[\"MR-...\"],"
                 "\"source_quotes\":[{\"rule_id\":\"MR-...\",\"quote\":\"已提供的依据片段\"}]}],"
@@ -745,10 +748,11 @@ def grounded_answer(question, evidence, llm_settings, counts=None):
                 {"role": "user", "content": "上次输出未通过格式或证据校验。重新输出合规JSON；每个rule_id必须正确；quote必须直接复制对应source_excerpt中连续的原文片段，不改写，至少4个字符；每个引用均须有quote；没有充分依据的意见删除；不新增数字或指南中未出现的内容。"}])
 
 
-def show_sources(records, title="查看指南依据与适用条件"):
+def show_sources(records, title="查看指南依据与适用条件", citation_numbers=None):
     with st.expander(title):
         for record in records:
-            st.markdown(f"**[{record['rule_id']}] {record['source_document']}**")
+            number = f"〔{citation_numbers[record['rule_id']]}〕" if citation_numbers else ""
+            st.markdown(f"**{number}[{record['rule_id']}] {record['source_document']}**")
             st.caption(f"版本：{record['source_version']} · 定位：{record['source_locator']} · 文本性质：{record['text_fidelity']}")
             st.write("管理条款：", record["recommendation"])
             st.write("适用人群：", record["populations"])
@@ -756,19 +760,46 @@ def show_sources(records, title="查看指南依据与适用条件"):
             st.write("图谱所存依据片段：", record["source_excerpt"])
 
 
+def answer_sections(answer, records):
+    """Group existing claims without rewriting or joining clinical conditions."""
+    lookup = {r["rule_id"]: r for r in records}
+    titles = {"HYPERTENSION": "高血压评估与管理", "T2DM": "糖尿病管理",
+              "DYSLIPIDEMIA": "血脂管理", "CMM_MANAGEMENT": "综合管理与随访",
+              "PRIMARY_PREVENTION": "生活方式与一级预防", "OTHER": "其他管理参考"}
+    groups, numbering = {}, {}
+    for claim in answer["claims"]:
+        topics = list(dict.fromkeys(lookup[i].get("topic") for i in claim["rule_ids"]))
+        topic = topics[0] if len(topics) == 1 and topics[0] in titles else "CMM_MANAGEMENT"
+        groups.setdefault(topic, []).append(claim)
+    sections = []
+    for topic, title in titles.items():
+        claims = groups.get(topic, [])
+        if not claims:
+            continue
+        used_ids = list(dict.fromkeys(i for claim in claims for i in claim["rule_ids"]))
+        for rid in used_ids:
+            if rid not in numbering:
+                numbering[rid] = len(numbering) + 1
+        sections.append({"title": title, "claims": claims, "sources": [lookup[i] for i in used_ids]})
+    return sections, numbering
+
+
 def show_answer(answer, records):
     if not answer["claims"]:
         st.info("当前知识图谱没有足够依据回答这个问题。")
-    for claim in answer["claims"]:
-        st.write(claim["text"])
-        st.caption("依据：" + "、".join("[" + i + "]" for i in claim["rule_ids"]))
-        lookup = {r["rule_id"]: r for r in records}
-        for rid in claim["rule_ids"]:
-            st.caption("条款适用条件：" + str(lookup[rid]["conditions"]))
+    sections, numbering = answer_sections(answer, records)
+    for section in sections:
+        if len(sections) > 1:
+            st.markdown("#### " + section["title"])
+        paragraphs = []
+        for claim in section["claims"]:
+            references = "〔" + "、".join(str(numbering[i]) for i in claim["rule_ids"]) + "〕"
+            paragraphs.append(claim["text"].strip() + references)
+        st.write("\n\n".join(paragraphs))
+        show_sources(section["sources"], f"查看本段指南依据与适用条件（{len(section['sources'])}条）", numbering)
     if answer["limitations"]:
-        st.info(answer["limitations"])
-    show_sources(records)
-    st.caption("回答已核对引用编号与依据片段；这不等同于临床专家审查，请结合原指南和实际情况使用。")
+        st.caption(answer["limitations"])
+    st.caption("正文编号对应折叠区中的指南条款；请结合适用人群与原指南核实后使用。")
 
 
 def fetch_evidence(topics):
@@ -859,8 +890,9 @@ def score_batch(data, audit, metabolic):
             result.loc[eligible, "代谢性疾病风险分层"] = ["高风险" if p >= CMM_PARAMETERS["threshold"] else "低风险" for p in probability]
             result.loc[eligible, "代谢性疾病阈值"] = CMM_PARAMETERS["threshold"]
     else:
-        for horizon in [0, 1, 3, 5]:
-            label = "0年（当前记录识别）" if horizon == 0 else f"{horizon}年"
+        # Future-horizon artifacts are retained, but are not scored or exposed in routine reports.
+        for horizon in [0]:
+            label = "当前CVD筛查"
             result[label + "分层"] = blocked
             if not eligible.any():
                 continue
@@ -885,11 +917,10 @@ def write_excel_report(result, audit, mapping, evidence):
                             ("指南依据", pd.DataFrame(evidence)), ("模型说明", pd.DataFrame([
             {"项目": "名称", "说明": APP_NAME},
             {"项目": "适用对象", "说明": "65岁及以上；明确基线无CVD；代谢性疾病入口还需确认相应病史"},
-            {"项目": "一般人群阈值", "说明": "各任务独立使用训练集折外Youden阈值，未在测试集调阈值"},
+            {"项目": "一般人群阈值", "说明": "当前CVD筛查使用训练集折外Youden阈值，未在测试集调阈值"},
             {"项目": "缺失值", "说明": "一般模型冻结插补器；缺失上限20%；年龄/性别/CVD病史不插补；代谢性疾病必要指标须完整"},
-            {"项目": "0年", "说明": "当前已记录状态识别，并非临床诊断，也不是未来0年风险"},
-            {"项目": "1/3/5年", "说明": "不同历史队列训练的独立模型；不是一条已验证的累积发病曲线"},
-            {"项目": "代谢性疾病", "说明": "原逻辑回归模型，阈值0.435；其预测时间范围尚未核实，不能解释为1/3/5年"},
+            {"项目": "当前CVD筛查", "说明": "当前CVD患病可能性筛查；现有模型以病史记录为结局标签，不能替代临床诊断"},
+            {"项目": "代谢性疾病", "说明": "原逻辑回归模型，阈值0.435；其预测时间范围尚未核实"},
             {"项目": "分层解释", "说明": "模型高风险不等于指南ASCVD高危；低风险也需常规健康管理"}]))]:
             safe = pd.read_csv(io.BytesIO(csv_bytes(frame)), dtype=object) if len(frame.columns) else pd.DataFrame()
             safe.to_excel(writer, sheet_name=name, index=False)
@@ -942,7 +973,7 @@ if view == "home":
     st.subheader("选择服务入口")
     left, right = st.columns(2, gap="large")
     with left:
-        st.markdown('<div class="entry-card"><div class="entry-icon">▦</div><h2>一般人群评估</h2><p>面向符合条件的老年人体检人群，包含有高血压、糖尿病等病史的人员。</p><div class="entry-badges">当前记录识别 · 1年 · 3年 · 5年</div></div>', unsafe_allow_html=True)
+        st.markdown('<div class="entry-card"><div class="entry-icon">▦</div><h2>一般人群评估</h2><p>面向符合条件的老年人体检人群，包含有高血压、糖尿病等病史的人员。</p><div class="entry-badges">当前CVD筛查 · 逐人分层 · 随访参考</div></div>', unsafe_allow_html=True)
         if st.button("进入一般人群评估 →", type="primary", use_container_width=True):
             st.session_state.portal_view = "general"
             st.rerun()
@@ -1034,7 +1065,7 @@ st.markdown("**已上传的体检数据**")
 st.dataframe(frame, hide_index=True, use_container_width=True, height=180)
 st.caption(f"本批共 {len(frame)} 人。点击生成报告后，系统将自动执行必要的数据核查与模型评分。")
 data, audit, mapping_report, encoding_notes = prepare_batch(frame, metabolic_mode)
-pipeline_stamp = json.dumps({"version": "20261025-v2", "catalog": catalog,
+pipeline_stamp = json.dumps({"version": "20261025-current-only", "catalog": catalog,
                              "metabolic_parameters": hashlib.sha256(CMM_PARAMETERS_FILE.read_bytes()).hexdigest()}, sort_keys=True)
 signature = hashlib.sha256((view + str(sheet) + pipeline_stamp).encode() + uploaded.getvalue()).hexdigest()
 if st.session_state.get("portal_batch_signature") != signature:
@@ -1063,7 +1094,7 @@ def highlight_risk(value):
 st.dataframe(display.style.map(highlight_risk), hide_index=True, use_container_width=True)
 st.caption("高风险以红色标记；待补齐、已排除和评分失败均不作低风险处理。")
 if not metabolic_mode:
-    st.caption("0年表示当前记录识别；1／3／5年来自不同历史队列的独立模型，不是一条已验证的累积风险曲线。")
+    st.caption("本报告展示当前CVD患病可能性筛查结果。建模标签来自病史记录，不能替代诊断；高风险需进一步核实，低风险不能排除疾病。")
 records = st.session_state.get("portal_records", [])
 st.subheader("报告解读与随访参考")
 st.caption("点击后检索指南；LLM仅接收匿名人数汇总和指南条款，不接收上传表格或档案号。")
@@ -1116,4 +1147,4 @@ with st.expander("数据核查与模型说明"):
     st.write("不同入口的适用人群存在重叠，请按研究任务使用；两类模型输出不作直接优劣比较。")
     st.write("使用旧版固定模型。一般人群阈值按训练集折外Youden规则确定；模型分层不是临床诊断或指南ASCVD分层。")
     if metabolic_mode:
-        st.write("代谢性疾病入口使用原逻辑回归模型及0.435阈值，预测时间范围尚未核实，不展示为1／3／5年。")
+        st.write("代谢性疾病入口使用原逻辑回归模型及0.435阈值，预测时间范围尚未核实。")
